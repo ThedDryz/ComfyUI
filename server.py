@@ -755,7 +755,17 @@ class PromptServer():
 
         @routes.get("/custom_node_startup_errors")
         async def get_custom_node_startup_errors(request):
-            return web.json_response(nodes.NODE_STARTUP_ERRORS)
+            # Group errors by source ("custom_node" / "comfy_extra" / "api_node")
+            # so the frontend/Manager can render them in distinct sections.
+            grouped: dict[str, dict[str, dict]] = {
+                "custom_node": {},
+                "comfy_extra": {},
+                "api_node": {},
+            }
+            for entry in nodes.NODE_STARTUP_ERRORS.values():
+                source = entry.get("source", "custom_node")
+                grouped.setdefault(source, {})[entry["module_name"]] = entry
+            return web.json_response(grouped)
 
         @routes.get("/api/jobs")
         async def get_jobs(request):

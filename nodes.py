@@ -2181,8 +2181,40 @@ EXTENSION_WEB_DIRS = {}
 # Dictionary of successfully loaded module names and associated directories.
 LOADED_MODULE_DIRS = {}
 
-# Dictionary of custom node startup errors, keyed by module name.
+# Mapping from internal module_parent values to the public "source"
+# category the API exposes. Keeps the on-disk layout decoupled from
+# the names the frontend/Manager switches on.
+_NODE_SOURCE_BY_PARENT = {
+    "custom_nodes": "custom_node",
+    "comfy_extras": "comfy_extra",
+    "comfy_api_nodes": "api_node",
+}
+
+
+def _node_source_from_parent(module_parent: str) -> str:
+    return _NODE_SOURCE_BY_PARENT.get(module_parent, "custom_node")
+
+
+# Dictionary of custom node startup errors, keyed by "<source>:<module_name>"
+# so that name collisions across custom_nodes / comfy_extras / comfy_api_nodes
+# do not overwrite each other. Each value contains: source, module_name,
+# module_path, error, traceback, phase.
 NODE_STARTUP_ERRORS: dict[str, dict] = {}
+
+
+def record_node_startup_error(
+    *, module_path: str, source: str, phase: str, error: BaseException, tb: str
+) -> None:
+    """Record a startup error for a node module so it can be exposed via the API."""
+    module_name = get_module_name(module_path)
+    NODE_STARTUP_ERRORS[f"{source}:{module_name}"] = {
+        "source": source,
+        "module_name": module_name,
+        "module_path": module_path,
+        "error": str(error),
+        "traceback": tb,
+        "phase": phase,
+    }
 
 
 def get_module_name(module_path: str) -> str:
@@ -2293,21 +2325,30 @@ async def load_custom_node(module_path: str, ignore=set(), module_parent="custom
                         NODE_DISPLAY_NAME_MAPPINGS[schema.node_id] = schema.display_name
                 return True
             except Exception as e:
+                tb = traceback.format_exc()
                 logging.warning(f"Error while calling comfy_entrypoint in {module_path}: {e}")
+                record_node_startup_error(
+                    module_path=module_path,
+                    source=_node_source_from_parent(module_parent),
+                    phase="entrypoint",
+                    error=e,
+                    tb=tb,
+                )
                 return False
         else:
             logging.warning(f"Skip {module_path} module for custom nodes due to the lack of NODE_CLASS_MAPPINGS or NODES_LIST (need one).")
             return False
     except Exception as e:
-        logging.warning(traceback.format_exc())
+        tb = traceback.format_exc()
+        logging.warning(tb)
         logging.warning(f"Cannot import {module_path} module for custom nodes: {e}")
-        module_name = get_module_name(module_path)
-        NODE_STARTUP_ERRORS[module_name] = {
-            "module_path": module_path,
-            "error": str(e),
-            "traceback": traceback.format_exc(),
-            "phase": "import",
-        }
+        record_node_startup_error(
+            module_path=module_path,
+            source=_node_source_from_parent(module_parent),
+            phase="import",
+            error=e,
+            tb=tb,
+        )
         return False
 
 async def init_external_custom_nodes():

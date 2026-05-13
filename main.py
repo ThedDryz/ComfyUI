@@ -141,14 +141,14 @@ def execute_prestartup_script():
         except Exception as e:
             import traceback
             logging.error(f"Failed to execute startup-script: {script_path} / {e}")
-            from nodes import NODE_STARTUP_ERRORS, get_module_name
-            node_module_name = get_module_name(os.path.dirname(script_path))
-            NODE_STARTUP_ERRORS[node_module_name] = {
-                "module_path": os.path.dirname(script_path),
-                "error": str(e),
-                "traceback": traceback.format_exc(),
-                "phase": "prestartup",
-            }
+            from nodes import record_node_startup_error
+            record_node_startup_error(
+                module_path=os.path.dirname(script_path),
+                source="custom_node",
+                phase="prestartup",
+                error=e,
+                tb=traceback.format_exc(),
+            )
         return False
 
     node_paths = folder_paths.get_folder_paths("custom_nodes")
