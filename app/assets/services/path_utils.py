@@ -160,7 +160,18 @@ def get_name_and_tags_from_asset_path(file_path: str) -> tuple[str, list[str]]:
     """Return (name, tags) derived from a filesystem path.
 
     - name: base filename with extension
-    - tags: [root_category] + parent folder names in order
+    - tags: [root_category] for paths with no parent subdirectories,
+      [root_category, slash_joined_subpath] otherwise. The parent subpath
+      (everything between the root category and the filename) is collapsed
+      into a single tag rather than emitted as one tag per directory, so
+      consumers can use ``tags[1]`` as a stable category identifier that
+      survives nested directory layouts (e.g. diffusers components).
+
+      Case is preserved on the subpath so that consumers can look up
+      providers keyed on the original-case path (e.g.
+      ``"diffusers/Kolors/text_encoder"``). The root category is always
+      lowercase by construction in
+      :func:`get_asset_category_and_relative_path`.
 
     Raises:
         ValueError: path does not belong to any known root.
@@ -170,4 +181,7 @@ def get_name_and_tags_from_asset_path(file_path: str) -> tuple[str, list[str]]:
     parent_parts = [
         part for part in p.parent.parts if part not in (".", "..", p.anchor)
     ]
-    return p.name, list(dict.fromkeys(normalize_tags([root_category, *parent_parts])))
+    tags = [root_category]
+    if parent_parts:
+        tags.append("/".join(parent_parts))
+    return p.name, list(dict.fromkeys(t.strip() for t in tags if t.strip()))

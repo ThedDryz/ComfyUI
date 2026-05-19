@@ -6,7 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
-from app.assets.services.path_utils import get_asset_category_and_relative_path
+from app.assets.services.path_utils import (
+    get_asset_category_and_relative_path,
+    get_name_and_tags_from_asset_path,
+)
 
 
 @pytest.fixture
@@ -35,6 +38,50 @@ def fake_dirs():
                     "output": output_dir,
                     "temp": temp_dir,
                     "models": models_dir,
+                }
+
+
+@pytest.fixture
+def fake_dirs_multi_bucket():
+    """Variant fixture with multiple model buckets (checkpoints + diffusers + loras)."""
+    with tempfile.TemporaryDirectory() as root:
+        root_path = Path(root)
+        input_dir = root_path / "input"
+        output_dir = root_path / "output"
+        temp_dir = root_path / "temp"
+        checkpoints_dir = root_path / "models" / "checkpoints"
+        diffusers_dir = root_path / "models" / "diffusers"
+        loras_dir = root_path / "models" / "loras"
+        for d in (
+            input_dir,
+            output_dir,
+            temp_dir,
+            checkpoints_dir,
+            diffusers_dir,
+            loras_dir,
+        ):
+            d.mkdir(parents=True)
+
+        with patch("app.assets.services.path_utils.folder_paths") as mock_fp:
+            mock_fp.get_input_directory.return_value = str(input_dir)
+            mock_fp.get_output_directory.return_value = str(output_dir)
+            mock_fp.get_temp_directory.return_value = str(temp_dir)
+
+            with patch(
+                "app.assets.services.path_utils.get_comfy_models_folders",
+                return_value=[
+                    ("checkpoints", [str(checkpoints_dir)]),
+                    ("diffusers", [str(diffusers_dir)]),
+                    ("loras", [str(loras_dir)]),
+                ],
+            ):
+                yield {
+                    "input": input_dir,
+                    "output": output_dir,
+                    "temp": temp_dir,
+                    "checkpoints": checkpoints_dir,
+                    "diffusers": diffusers_dir,
+                    "loras": loras_dir,
                 }
 
 
@@ -79,3 +126,64 @@ class TestGetAssetCategoryAndRelativePath:
     def test_unknown_path_raises(self, fake_dirs):
         with pytest.raises(ValueError, match="not within"):
             get_asset_category_and_relative_path("/some/random/path.png")
+
+
+class TestGetNameAndTagsFromAssetPath:
+    """tags collapse the parent subpath into a single slash-joined tag.
+
+    Consumers should be able to read ``tags[1]`` as a stable category
+    identifier regardless of how deep the file lives in the bucket.
+    """
+
+    def test_flat_input(self, fake_dirs_multi_bucket):
+        f = fake_dirs_multi_bucket["input"] / "photo.png"
+        f.touch()
+        name, tags = get_name_and_tags_from_asset_path(str(f))
+        assert name == "photo.png"
+        assert tags == ["input"]
+
+    def test_flat_output(self, fake_dirs_multi_bucket):
+        f = fake_dirs_multi_bucket["output"] / "result_00001.png"
+        f.touch()
+        name, tags = get_name_and_tags_from_asset_path(str(f))
+        assert name == "result_00001.png"
+        assert tags == ["output"]
+
+    def test_flat_models_checkpoint(self, fake_dirs_multi_bucket):
+        f = fake_dirs_multi_bucket["checkpoints"] / "flux.safetensors"
+        f.touch()
+        name, tags = get_name_and_tags_from_asset_path(str(f))
+        assert name == "flux.safetensors"
+        assert tags == ["models", "checkpoints"]
+
+    def test_diffusers_nested_subpath_slash_joined(self, fake_dirs_multi_bucket):
+        """Diffusers components live in nested directories — the full subpath
+        must collapse into one tag so consumers can look up the model category
+        via tags[1] regardless of nesting depth."""
+        nested = (
+            fake_dirs_multi_bucket["diffusers"]
+            / "Kolors"
+            / "text_encoder"
+        )
+        nested.mkdir(parents=True)
+        f = nested / "model.safetensors"
+        f.touch()
+        name, tags = get_name_and_tags_from_asset_path(str(f))
+        assert name == "model.safetensors"
+        assert tags == ["models", "diffusers/Kolors/text_encoder"]
+
+    def test_deep_lora_user_subpath_slash_joined(self, fake_dirs_multi_bucket):
+        """User-created subdirectories under a model bucket also collapse to a
+        single tag rather than one tag per directory."""
+        nested = (
+            fake_dirs_multi_bucket["loras"]
+            / "my"
+            / "custom"
+            / "path"
+        )
+        nested.mkdir(parents=True)
+        f = nested / "v0001.safetensors"
+        f.touch()
+        name, tags = get_name_and_tags_from_asset_path(str(f))
+        assert name == "v0001.safetensors"
+        assert tags == ["models", "loras/my/custom/path"]
