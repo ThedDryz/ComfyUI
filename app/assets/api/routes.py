@@ -224,10 +224,7 @@ async def list_assets_route(request: web.Request) -> web.Response:
             after=q.after,
         )
     except InvalidCursorError as e:
-        return web.json_response(
-            {"error": {"code": "INVALID_CURSOR", "message": str(e)}},
-            status=400,
-        )
+        return _build_error_response(400, "INVALID_CURSOR", str(e))
 
     summaries = [_build_asset_response(item) for item in result.items]
 

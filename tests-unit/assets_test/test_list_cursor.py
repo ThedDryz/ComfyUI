@@ -4,8 +4,6 @@ These tests exercise the handler/service/query path end-to-end;
 cursor-encoding-level tests live in
 tests-unit/assets_test/services/test_cursor.py.
 """
-import time
-
 import pytest
 import requests
 
@@ -201,12 +199,16 @@ def test_cursor_walks_for_non_name_sorts(sort_field, http: requests.Session, api
     Without this, the `created_at` / `updated_at` (time-encoded micros) and
     `size` (int-encoded) cursor paths go entirely unexercised end-to-end.
     """
-    # Stagger create_time slightly so created_at / updated_at sort is well-defined.
+    # Sizes increase strictly by index, so `size desc` has a deterministic
+    # expected order. Time-based sorts (created_at / updated_at) can tie when
+    # rows are inserted faster than the DB's timestamp resolution; for those
+    # we check coverage and no-duplicates and let the keyset tiebreaker do
+    # the rest, instead of sleeping between inserts and asserting an order
+    # that depends on clock granularity.
     names = []
     for i in range(4):
         n = f"cursor_{sort_field}_{i:02d}.safetensors"
         asset_factory(n, ["models", "checkpoints", "unit-tests", f"cursor-{sort_field}"], {}, make_asset_bytes(n, size=2048 + i))
-        time.sleep(0.05)  # ensure distinct timestamps
         names.append(n)
 
     params = {
@@ -232,7 +234,20 @@ def test_cursor_walks_for_non_name_sorts(sort_field, http: requests.Session, api
             break
         assert pages < 10, "guard against runaway cursor loop"
 
-    assert set(seen) == set(names), f"missing items for sort={sort_field}: expected {set(names)}, got {set(seen)}"
+    # No duplicates: a faulty keyset boundary that returns the same row across
+    # two pages must fail this check.
+    assert len(seen) == len(set(seen)), (
+        f"cursor walk repeated rows for sort={sort_field}: {seen}"
+    )
+    # Full coverage: every seeded asset reached exactly once.
+    assert set(seen) == set(names), (
+        f"missing items for sort={sort_field}: expected {set(names)}, got {set(seen)}"
+    )
+    # Strict order check for the only field with a clock-independent ordering.
+    if sort_field == "size":
+        assert seen == list(reversed(names)), (
+            f"size cursor walked out of order: got {seen}, expected {list(reversed(names))}"
+        )
 
 
 def test_cursor_order_mismatch_returns_400(http: requests.Session, api_base: str, asset_factory, make_asset_bytes):

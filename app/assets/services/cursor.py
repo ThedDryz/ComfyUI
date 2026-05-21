@@ -11,14 +11,13 @@ so replaying a `desc` cursor against an `asc` request fails with
 malformed.
 
 Encoding is base64url with no padding. JSON serialization escapes `<`,
-`>`, `&`, U+2028, and U+2029 to match Go's default `json.Marshal`
-behavior so asset names containing those characters produce
-byte-identical cursors across compatible Go implementations.
+`>`, `&`, U+2028, and U+2029 in encoded string values so asset names
+containing those characters produce a stable, byte-identical wire form
+across any compatible implementation of the same payload format.
 
 Time values are serialized as Unix microseconds (UTC) — microsecond
-precision matches PostgreSQL's `timestamp` type, so a cursor minted from
-a stored timestamp compares back exactly without rounding rows in the
-same millisecond bucket.
+precision is sufficient to round-trip the timestamps stored by the
+database without rounding rows in the same millisecond bucket.
 """
 from __future__ import annotations
 
@@ -67,20 +66,31 @@ def encode_cursor(sort_field: str, value: str, id: str, order: str = "desc") -> 
     ``INVALID_CURSOR`` rather than silently walking the wrong direction.
     """
     if order not in _VALID_ORDERS:
-        raise ValueError(f"order must be one of {_VALID_ORDERS}, got {order!r}")
+        raise InvalidCursorError(f"order must be one of {_VALID_ORDERS}, got {order!r}")
+    # Symmetric input validation: the encoder must reject anything the
+    # decoder rejects, or the same server will mint cursors it then 400s on
+    # the next request.
+    if not id:
+        raise InvalidCursorError("id must be non-empty")
+    if len(id) > MAX_CURSOR_ID_LENGTH:
+        raise InvalidCursorError("id exceeds maximum length")
+    if len(value) > MAX_CURSOR_VALUE_LENGTH:
+        raise InvalidCursorError("value exceeds maximum length")
     payload = {"s": sort_field, "v": value, "id": id, "o": order}
     raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-    # Go's default `json.Marshal` escapes these characters in string values; we
-    # do the same so an asset name containing one of them produces byte-
-    # identical cursors across runtimes. None of these characters appear in
-    # JSON structural syntax, so a global replace on the serialized output is
-    # safe — it can only touch characters from the encoded values.
+    # Match the default JSON escaping of HTML-significant characters and JS
+    # line/paragraph separators (U+2028 / U+2029) so an asset name carrying
+    # any of them encodes to identical bytes across runtimes. None of these
+    # characters appear in JSON structural syntax, so a global replace on the
+    # serialized output can only touch encoded values. Use explicit \uXXXX
+    # escapes for U+2028 / U+2029 so the source survives any editor / git
+    # tooling that normalizes invisible separators.
     raw = (
         raw.replace("<", "\\u003c")
            .replace(">", "\\u003e")
            .replace("&", "\\u0026")
-           .replace(" ", "\\u2028")
-           .replace(" ", "\\u2029")
+           .replace("\u2028", "\\u2028")
+           .replace("\u2029", "\\u2029")
     )
     return base64.urlsafe_b64encode(raw.encode("utf-8")).rstrip(b"=").decode("ascii")
 

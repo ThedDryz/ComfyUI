@@ -6789,6 +6789,7 @@ components:
           required:
             - code
             - message
+            - details
           properties:
             code:
               type: string
@@ -6800,6 +6801,13 @@ components:
               enum: [INVALID_CURSOR, INVALID_QUERY]
             message:
               type: string
+            details:
+              type: object
+              description: |
+                Free-form, code-specific context. `INVALID_QUERY` populates this
+                with an `errors` array of Pydantic validation entries;
+                `INVALID_CURSOR` returns an empty object.
+              additionalProperties: true
 
     TagInfo:
       type: object
