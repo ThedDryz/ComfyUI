@@ -357,6 +357,10 @@ class QwenFunControlNet(ControlNet):
         super().pre_run(model, percent_to_timestep_function)
         self.set_extra_arg("base_model", model.diffusion_model)
 
+    def cleanup(self):
+        self.extra_args.pop("base_model", None)
+        super().cleanup()
+
     def copy(self):
         c = QwenFunControlNet(None, global_average_pooling=self.global_average_pooling, load_device=self.load_device, manual_cast_dtype=self.manual_cast_dtype)
         c.control_model = self.control_model

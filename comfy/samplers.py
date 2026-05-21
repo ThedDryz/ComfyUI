@@ -433,7 +433,11 @@ def _calc_cond_batch_multigpu(model: BaseModel, conds: list[list[dict]], x_in: t
             for i in range(1, len(to_batch_temp) + 1):
                 batch_amount = to_batch_temp[:len(to_batch_temp)//i]
                 input_shape = [len(batch_amount) * first_shape[0]] + list(first_shape)[1:]
-                if model.memory_required(input_shape) * 1.5 < free_memory:
+                cond_shapes = collections.defaultdict(list)
+                for tt in batch_amount:
+                    for k, v in to_run[tt][0].conditioning.items():
+                        cond_shapes[k].append(v.size())
+                if model.memory_required(input_shape, cond_shapes=cond_shapes) * 1.5 < free_memory:
                     to_batch = batch_amount
                     break
 
@@ -866,14 +870,21 @@ def calculate_start_end_timesteps(model, conds):
 
 def pre_run_control(model, conds):
     s = model.model_sampling
+    # Per-device model lookup so multigpu control clones get the matching
+    # diffusion_model (e.g. QwenFunControlNet stashes it into extra_args).
+    device_models: dict = {}
+    patcher = getattr(model, "current_patcher", None)
+    if patcher is not None:
+        for p in patcher.get_additional_models_with_key("multigpu"):
+            device_models[p.load_device] = p.model
     for t in range(len(conds)):
         x = conds[t]
 
         percent_to_timestep_function = lambda a: s.percent_to_sigma(a)
         if 'control' in x:
             x['control'].pre_run(model, percent_to_timestep_function)
-            for device_cnet in x['control'].multigpu_clones.values():
-                device_cnet.pre_run(model, percent_to_timestep_function)
+            for device, device_cnet in x['control'].multigpu_clones.items():
+                device_cnet.pre_run(device_models.get(device, model), percent_to_timestep_function)
 
 def apply_empty_x_to_equal_area(conds, uncond, name, uncond_fill_func):
     cond_cnets = []
