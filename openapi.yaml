@@ -8756,3 +8756,1187 @@ components:
             $ref: "#/components/schemas/TaskEntry"
         pagination:
           $ref: "#/components/schemas/PaginationInfo"
+
+    # ===== Cloud-only schemas (Comfy-Org/cloud runtime, BE-1106) =====
+    AssetDownloadResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Acknowledgement of an async asset download task; clients poll GET /api/tasks/{task_id} for status.'
+      required:
+      - task_id
+      - status
+      properties:
+        task_id:
+          type: string
+          format: uuid
+          description: Task ID for tracking download progress via GET /api/tasks/{task_id}
+        status:
+          type: string
+          enum:
+          - created
+          - running
+          - completed
+          - failed
+          description: Current task status
+        message:
+          type: string
+          description: Human-readable message
+          example: Download task created. Use task_id to track progress.
+
+    AssetMetadataResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Metadata for a remotely hosted asset resolved by URL.'
+      required:
+      - content_length
+      properties:
+        content_length:
+          type: integer
+          format: int64
+          description: Size of the asset in bytes (-1 if unknown)
+          example: 4294967296
+        content_type:
+          type: string
+          description: MIME type of the asset
+          example: application/octet-stream
+        filename:
+          type: string
+          description: Suggested filename for the asset from source
+          example: realistic-vision-v5.safetensors
+        name:
+          type: string
+          description: Display name or title for the asset from source
+          example: Realistic Vision v5.0
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags for categorization from source
+          example:
+          - models
+          - checkpoint
+        preview_image:
+          type: string
+          description: Preview image as base64-encoded data URL
+          example: data:image/jpeg;base64,/9j/4AAQSkZJRg...
+        validation:
+          description: Validation results for the file
+          allOf:
+          - $ref: '#/components/schemas/ValidationResult'
+
+    BillingBalanceResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Current credit balance and usage details for a workspace.'
+      required:
+      - amount_micros
+      - currency
+      properties:
+        amount_micros:
+          type: number
+          format: double
+          description: The total remaining balance in microamount (1/1,000,000 of the currency unit)
+        prepaid_balance_micros:
+          type: number
+          format: double
+          description: The remaining balance from prepaid commits in microamount
+        cloud_credit_balance_micros:
+          type: number
+          format: double
+          description: The remaining balance from cloud credits in microamount
+        pending_charges_micros:
+          type: number
+          format: double
+          description: The total amount of pending/unbilled charges from draft invoices in microamount
+        effective_balance_micros:
+          type: number
+          format: double
+          description: The effective balance (total balance minus pending charges). Can be negative if pending charges exceed
+            the balance.
+        currency:
+          type: string
+          example: usd
+          description: Currency code
+
+    BillingPlansResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] List of available billing plans for subscription.'
+      required:
+      - plans
+      properties:
+        current_plan_slug:
+          type: string
+          description: Current plan slug if subscribed
+        plans:
+          type: array
+          items:
+            $ref: '#/components/schemas/Plan'
+
+    BillingStatusResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Current billing and subscription status for a workspace.'
+      required:
+      - is_active
+      - has_funds
+      properties:
+        is_active:
+          type: boolean
+          description: Whether the workspace has an active subscription
+        subscription_status:
+          type: string
+          enum:
+          - active
+          - ended
+          - canceled
+          description: Subscription activity status (scheduled subscriptions are not returned)
+        subscription_tier:
+          $ref: '#/components/schemas/SubscriptionTier'
+        subscription_duration:
+          $ref: '#/components/schemas/SubscriptionDuration'
+        plan_slug:
+          type: string
+          description: Plan identifier (e.g., standard-monthly, team-pro-annual)
+        billing_status:
+          $ref: '#/components/schemas/BillingStatus'
+        has_funds:
+          type: boolean
+          description: Whether the workspace has available credits
+        cancel_at:
+          type: string
+          format: date-time
+          description: When the subscription will become inactive (if canceled)
+        renewal_date:
+          type: string
+          format: date-time
+          description: When the current billing period ends and the next one begins
+
+    GetUserDataResponseFull:
+      type: array
+      x-runtime: [cloud]
+      description: '[cloud-only] List of user data file entries (each with path, size, and modification time) returned when full_info=true.'
+      items:
+        $ref: '#/components/schemas/GetUserDataResponseFullFile'
+
+    HistoryDetailEntry:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] History entry with full prompt data'
+      properties:
+        prompt:
+          type: object
+          description: Full prompt execution data
+          properties:
+            priority:
+              type: number
+              format: double
+              description: Execution priority
+            prompt_id:
+              type: string
+              description: The prompt ID
+            prompt:
+              type: object
+              description: The workflow nodes
+              additionalProperties: true
+            extra_data:
+              type: object
+              description: Additional execution data
+              additionalProperties: true
+            outputs_to_execute:
+              type: array
+              items:
+                type: string
+              description: Output nodes to execute
+        outputs:
+          type: object
+          description: Output data from execution (generated images, files, etc.)
+          additionalProperties: true
+        status:
+          type: object
+          description: Execution status and timeline information
+          additionalProperties: true
+        meta:
+          type: object
+          description: Metadata about the execution and nodes
+          additionalProperties: true
+
+    HistoryDetailResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Detailed execution history response for a specific prompt.
+
+        Returns a dictionary with prompt_id as key and full history data as value.
+
+        '
+      additionalProperties:
+        $ref: '#/components/schemas/HistoryDetailEntry'
+
+    HistoryResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Execution history response with history array.
+
+        Returns an object with a "history" key containing an array of history entries.
+
+        Each entry includes prompt_id as a property along with execution data.
+
+        '
+      required:
+      - history
+      properties:
+        history:
+          type: array
+          description: Array of history entries ordered by creation time (newest first)
+          items:
+            $ref: '#/components/schemas/HistoryEntry'
+
+    HubLabelInfo:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Metadata for a single Hub label.'
+      required:
+      - name
+      - display_name
+      - type
+      properties:
+        name:
+          type: string
+          description: Slug identifier.
+        display_name:
+          type: string
+          description: Human-readable display name.
+        description:
+          type: string
+          description: Optional description of the label.
+        type:
+          type: string
+          enum:
+          - tag
+          - model
+          - custom_node
+          description: Label category.
+
+    HubProfileSummary:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Abbreviated Hub profile used in workflow listings.'
+      required:
+      - username
+      properties:
+        username:
+          type: string
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+          description: Public URL of the profile avatar image.
+
+    HubWorkflowListResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Paginated list of Hub workflows matching search criteria.'
+      required:
+      - workflows
+      properties:
+        workflows:
+          type: array
+          items:
+            anyOf:
+            - $ref: '#/components/schemas/HubWorkflowSummary'
+            - $ref: '#/components/schemas/HubWorkflowDetail'
+          description: Array of HubWorkflowSummary (default) or HubWorkflowDetail (when detail=true).
+        next_cursor:
+          type: string
+          description: Cursor for the next page, empty if no more results.
+
+    HubWorkflowStatus:
+      type: string
+      x-runtime: [cloud]
+      description: '[cloud-only] Public workflow status. NULL in the database is represented as pending in API responses.'
+      enum:
+      - pending
+      - approved
+      - rejected
+      - deprecated
+
+    HubWorkflowSummary:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Abbreviated Hub workflow metadata used in search and listing results.'
+      required:
+      - share_id
+      - name
+      - profile
+      - status
+      properties:
+        share_id:
+          type: string
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/HubWorkflowStatus'
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/LabelRef'
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/LabelRef'
+        custom_nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/LabelRef'
+        thumbnail_type:
+          type: string
+          enum:
+          - image
+          - video
+          - image_comparison
+        thumbnail_url:
+          type: string
+        thumbnail_comparison_url:
+          type: string
+        publish_time:
+          type: string
+          format: date-time
+          nullable: true
+        profile:
+          $ref: '#/components/schemas/HubProfileSummary'
+        metadata:
+          type: object
+          additionalProperties: true
+        tutorial_url:
+          type: string
+        sample_image_urls:
+          type: array
+          items:
+            type: string
+
+    HubWorkflowTemplateEntry:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Entry in the curated workflow template gallery shown on the home page.'
+      required:
+      - name
+      - title
+      - status
+      properties:
+        name:
+          type: string
+          description: Slug identifier for the template
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/HubWorkflowStatus'
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        models:
+          type: array
+          items:
+            type: string
+        requiresCustomNodes:
+          type: array
+          items:
+            type: string
+        thumbnailVariant:
+          type: string
+        mediaType:
+          type: string
+        mediaSubtype:
+          type: string
+        size:
+          type: integer
+          format: int64
+          description: Workflow asset size in bytes.
+        vram:
+          type: integer
+          format: int64
+          description: Approximate VRAM requirement in bytes.
+        usage:
+          type: integer
+          format: int64
+          description: Usage count reported upstream.
+        searchRank:
+          type: integer
+          format: int64
+          description: Search ranking score reported upstream.
+        isEssential:
+          type: boolean
+          description: Whether the template belongs to a module marked as essential.
+        openSource:
+          type: boolean
+        profile:
+          $ref: '#/components/schemas/HubProfileSummary'
+        tutorialUrl:
+          type: string
+        logos:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        date:
+          type: string
+          description: Publication date in YYYY-MM-DD format
+        io:
+          type: object
+          properties:
+            inputs:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            outputs:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+        includeOnDistributions:
+          type: array
+          items:
+            type: string
+        thumbnailUrl:
+          type: string
+          description: Public URL of the primary thumbnail
+        thumbnailComparisonUrl:
+          type: string
+          description: Public URL of the comparison thumbnail
+        shareId:
+          type: string
+          description: Share ID for linking to the hub workflow detail
+        extendedDescription:
+          type: string
+          description: AI-generated extended description of the workflow
+        metaDescription:
+          type: string
+          description: AI-generated SEO meta description (under 160 chars)
+        howToUse:
+          type: array
+          items:
+            type: string
+          description: AI-generated step-by-step usage instructions
+        suggestedUseCases:
+          type: array
+          items:
+            type: string
+          description: AI-generated suggested use cases
+        faqItems:
+          type: array
+          items:
+            type: object
+            required:
+            - question
+            - answer
+            properties:
+              question:
+                type: string
+              answer:
+                type: string
+          description: AI-generated FAQ items
+        contentTemplate:
+          type: string
+          description: Content template used for generation (tutorial, showcase, comparison, breakthrough)
+
+    JobStatusResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Job status information'
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The job ID
+        status:
+          type: string
+          enum:
+          - waiting_to_dispatch
+          - pending
+          - in_progress
+          - completed
+          - error
+          - cancelled
+          description: Current job status
+        created_at:
+          type: string
+          format: date-time
+          description: When the job was created
+        updated_at:
+          type: string
+          format: date-time
+          description: When the job was last updated
+        last_state_update:
+          type: string
+          format: date-time
+          description: When the job status was last changed
+        assigned_inference:
+          type: string
+          nullable: true
+          description: The inference instance assigned to this job (if any)
+        error_message:
+          type: string
+          nullable: true
+          description: Error message if the job failed
+      required:
+      - id
+      - status
+      - created_at
+      - updated_at
+
+    JobsListResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Paginated list of jobs for the authenticated user.'
+      required:
+      - jobs
+      - pagination
+      properties:
+        jobs:
+          type: array
+          description: Array of jobs ordered by specified sort field
+          items:
+            $ref: '#/components/schemas/JobEntry'
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+
+    LabelRef:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Reference to a Hub label by ID.'
+      required:
+      - name
+      - display_name
+      properties:
+        name:
+          type: string
+          description: Slug identifier (e.g. "video-generation", "flux").
+        display_name:
+          type: string
+          description: Human-readable display name (e.g. "Video Generation", "Flux").
+
+    LogsResponse:
+      type: array
+      x-runtime: [cloud]
+      description: '[cloud-only] System logs response'
+      items:
+        type: object
+        properties:
+          timestamp:
+            type: string
+            format: date-time
+            description: When the log entry was created
+          level:
+            type: string
+            enum:
+            - debug
+            - info
+            - warn
+            - error
+            description: Log level
+          message:
+            type: string
+            description: Log message
+          source:
+            type: string
+            description: Source of the log entry
+          metadata:
+            type: object
+            additionalProperties: true
+            description: Additional log metadata
+
+    Member:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Workspace member with profile and role information.'
+      required:
+      - id
+      - name
+      - email
+      - role
+      - joined_at
+      properties:
+        id:
+          type: string
+          description: User ID
+        name:
+          type: string
+          description: User's display name
+        email:
+          type: string
+          format: email
+          description: User's email address
+        role:
+          type: string
+          enum:
+          - owner
+          - member
+          description: User's role in the workspace
+        joined_at:
+          type: string
+          format: date-time
+          description: When the user joined the workspace
+
+    OAuthRegisterBadRequestResponse:
+      x-runtime: [cloud]
+      description: "[cloud-only] Union of the two 400 shapes /oauth/register can emit. `OAuthRegisterError` is the handler-shaped\
+        \ RFC 7591 \xA73.2.2 error; `BindingErrorResponse` is the strict-server binding-layer error fired when the request body\
+        \ fails OpenAPI-schema validation before the handler runs.\n"
+      oneOf:
+      - $ref: '#/components/schemas/OAuthRegisterError'
+      - $ref: '#/components/schemas/BindingErrorResponse'
+
+    PendingInvite:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] An outstanding workspace invitation that has not yet been accepted.'
+      required:
+      - id
+      - email
+      - invited_at
+      - expires_at
+      properties:
+        id:
+          type: string
+          description: Invite ID
+        email:
+          type: string
+          format: email
+          description: Email address of the invited user
+        token:
+          type: string
+          description: Invite token for constructing invite links. Empty for expired invites.
+        invited_at:
+          type: string
+          format: date-time
+          description: When the invite was created
+        expires_at:
+          type: string
+          format: date-time
+          description: When the invite expires
+
+    Plan:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Billing plan details including pricing, limits, and features.'
+      required:
+      - slug
+      - tier
+      - duration
+      - price_cents
+      - credits_cents
+      - max_seats
+      - availability
+      - seat_summary
+      properties:
+        slug:
+          type: string
+          description: Plan identifier (e.g., "pro-monthly", "team-standard-annual")
+          example: pro-monthly
+        tier:
+          $ref: '#/components/schemas/SubscriptionTier'
+        duration:
+          $ref: '#/components/schemas/SubscriptionDuration'
+        price_cents:
+          type: integer
+          format: int64
+          description: Per-member price in cents (base + one seat)
+          example: 10000
+        credits_cents:
+          type: integer
+          format: int64
+          description: Per-member credits in cents (base + one seat)
+          example: 10000
+        max_seats:
+          type: integer
+          format: int64
+          description: Maximum number of seats allowed for this plan
+          example: 20
+        availability:
+          $ref: '#/components/schemas/PlanAvailability'
+        seat_summary:
+          $ref: '#/components/schemas/PlanSeatSummary'
+
+    PlanAvailability:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Availability and eligibility information for a billing plan.'
+      required:
+      - available
+      properties:
+        available:
+          type: boolean
+          description: Whether the workspace can subscribe to this plan
+        reason:
+          $ref: '#/components/schemas/PlanAvailabilityReason'
+
+    PlanAvailabilityReason:
+      type: string
+      x-runtime: [cloud]
+      enum:
+      - same_plan
+      - incompatible_transition
+      - requires_team
+      - requires_personal
+      - exceeds_max_seats
+      description: '[cloud-only] Reason why a plan is unavailable'
+
+    PlanSeatSummary:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Summary of seat costs based on current workspace members'
+      required:
+      - seat_count
+      - total_cost_cents
+      - total_credits_cents
+      properties:
+        seat_count:
+          type: integer
+          description: Total number of seats (owner + members) that would be charged
+          example: 5
+        total_cost_cents:
+          type: integer
+          format: int64
+          description: Total cost for all seats in cents
+          example: 50000
+        total_credits_cents:
+          type: integer
+          format: int64
+          description: Total credits granted for all seats in cents
+          example: 50000
+
+    PreviewPlanInfo:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Plan information for preview display'
+      required:
+      - slug
+      - tier
+      - duration
+      - price_cents
+      - credits_cents
+      - seat_summary
+      properties:
+        slug:
+          type: string
+          description: Plan slug
+          example: team-pro-monthly
+        tier:
+          $ref: '#/components/schemas/SubscriptionTier'
+        duration:
+          $ref: '#/components/schemas/SubscriptionDuration'
+        price_cents:
+          type: integer
+          format: int64
+          description: Per-seat price in cents
+          example: 10000
+        credits_cents:
+          type: integer
+          format: int64
+          description: Per-seat credits in cents
+          example: 10000
+        seat_summary:
+          $ref: '#/components/schemas/PlanSeatSummary'
+        period_start:
+          type: string
+          format: date-time
+          description: Current billing period start (only for current_plan)
+        period_end:
+          type: string
+          format: date-time
+          description: Current billing period end (only for current_plan)
+
+    PreviewSubscribeResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Itemized cost preview for a pending subscription change.'
+      required:
+      - allowed
+      - transition_type
+      - effective_at
+      - is_immediate
+      - cost_today_cents
+      - cost_next_period_cents
+      - credits_today_cents
+      - credits_next_period_cents
+      - new_plan
+      properties:
+        allowed:
+          type: boolean
+          description: Whether this subscription change is allowed
+        reason:
+          type: string
+          description: Reason why the change is not allowed (only present if allowed=false)
+        transition_type:
+          type: string
+          enum:
+          - new_subscription
+          - upgrade
+          - downgrade
+          - duration_change
+          description: Type of subscription transition
+        effective_at:
+          type: string
+          format: date-time
+          description: When the change takes effect
+        is_immediate:
+          type: boolean
+          description: Whether the change takes effect immediately (true) or at period end (false)
+        cost_today_cents:
+          type: integer
+          format: int64
+          description: Amount to charge today in cents (0 for downgrades)
+          example: 5000
+        cost_next_period_cents:
+          type: integer
+          format: int64
+          description: Amount that will be charged at next billing period in cents
+          example: 10000
+        credits_today_cents:
+          type: integer
+          format: int64
+          description: Credits granted today in cents (prorated for mid-period upgrades)
+          example: 5000
+        credits_next_period_cents:
+          type: integer
+          format: int64
+          description: Credits that will be granted at next billing period in cents
+          example: 10000
+        current_plan:
+          $ref: '#/components/schemas/PreviewPlanInfo'
+        new_plan:
+          $ref: '#/components/schemas/PreviewPlanInfo'
+
+    PublishedWorkflowDetail:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Full detail of a publicly published workflow on the Hub.'
+      required:
+      - share_id
+      - workflow_id
+      - name
+      - listed
+      - workflow_json
+      - assets
+      properties:
+        share_id:
+          type: string
+        workflow_id:
+          type: string
+        name:
+          type: string
+          description: Human-readable workflow name.
+        listed:
+          type: boolean
+        publish_time:
+          type: string
+          format: date-time
+          nullable: true
+        workflow_json:
+          type: object
+          additionalProperties: true
+          description: The workflow JSON content at publish time.
+        assets:
+          type: array
+          description: Published assets with their library status for the caller.
+          items:
+            $ref: '#/components/schemas/AssetInfo'
+
+    SecretResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] User secret metadata (the secret value itself is never returned after creation).'
+      required:
+      - id
+      - name
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the secret
+        name:
+          type: string
+          description: User-provided label for the secret
+        provider:
+          type: string
+          description: Provider identifier (e.g., huggingface, civitai)
+        last_used_at:
+          type: string
+          format: date-time
+          description: When the secret was last used for decryption
+        created_at:
+          type: string
+          format: date-time
+          description: When the secret was created
+        updated_at:
+          type: string
+          format: date-time
+          description: When the secret was last updated
+
+    SubscriptionDuration:
+      type: string
+      x-runtime: [cloud]
+      enum:
+      - MONTHLY
+      - ANNUAL
+      description: '[cloud-only] Billing period (uppercase to match comfy-api)'
+
+    SubscriptionTier:
+      type: string
+      x-runtime: [cloud]
+      enum:
+      - FREE
+      - STANDARD
+      - CREATOR
+      - PRO
+      - FOUNDERS_EDITION
+      description: '[cloud-only] Subscription tier (uppercase to match comfy-api)'
+
+    UserDataResponseFull:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] User data listing entry with file metadata (path, size, modification time).'
+      properties:
+        path:
+          type: string
+        size:
+          type: integer
+        modified:
+          type: integer
+          format: int64
+          description: UNIX timestamp of the last modification in milliseconds.
+
+    ValidationError:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Details of a single validation error encountered during asset operations.'
+      required:
+      - code
+      - message
+      - field
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          example: FORMAT_NOT_ALLOWED
+        message:
+          type: string
+          description: Human-readable error message
+          example: 'File format "PickleTensor" is not allowed. Allowed formats: [SafeTensor]'
+        field:
+          type: string
+          description: Field that failed validation
+          example: format
+
+    ValidationResult:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Result of validating a set of asset operations.'
+      required:
+      - is_valid
+      properties:
+        is_valid:
+          type: boolean
+          description: Overall validation status (true if all checks passed)
+          example: true
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          description: Blocking validation errors that prevent download
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          description: Non-blocking validation warnings (informational only)
+
+    WorkflowForkedFrom:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Reference to the parent workflow from which this workflow was forked.'
+      properties:
+        workflow_id:
+          type: string
+        workflow_version_id:
+          type: string
+
+    WorkflowResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Full workflow entity including metadata and version history.'
+      required:
+      - id
+      - latest_version
+      - created_by
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        default_view:
+          type: string
+          enum:
+          - workflow
+          - app
+        latest_version:
+          type: integer
+        forked_from:
+          $ref: '#/components/schemas/WorkflowForkedFrom'
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    WorkflowVersionContentResponse:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Full workflow version including the serialized workflow JSON.'
+      required:
+      - id
+      - version
+      - workflow_json
+      - created_by
+      - created_at
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+        workflow_json:
+          type: object
+          additionalProperties: true
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        dependency_asset_ids:
+          type: array
+          items:
+            type: string
+
+    WorkspaceAPIKeyInfo:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Metadata for a workspace-scoped API key (secret is never returned).'
+      required:
+      - id
+      - workspace_id
+      - user_id
+      - name
+      - description
+      - key_prefix
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: API key ID
+        workspace_id:
+          type: string
+          description: Workspace this key belongs to
+        user_id:
+          type: string
+          description: User who created this key
+        name:
+          type: string
+          description: User-provided label
+        description:
+          type: string
+          description: User-provided description of the key's purpose. Limit is byte-based (UTF-8 encoding); 5000 bytes equals
+            5000 ASCII characters or fewer multi-byte characters.
+          maxLength: 5000
+        key_prefix:
+          type: string
+          description: First 8 chars after prefix for display
+        expires_at:
+          type: string
+          format: date-time
+          description: When the key expires (if set)
+        last_used_at:
+          type: string
+          format: date-time
+          description: Last time the key was used
+        revoked_at:
+          type: string
+          format: date-time
+          description: When the key was revoked (if revoked)
+        created_at:
+          type: string
+          format: date-time
+          description: When the key was created
+
+    WorkspaceSummary:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Abbreviated workspace metadata used in list responses.'
+      required:
+      - id
+      - name
+      - type
+      properties:
+        id:
+          type: string
+          example: w-a1b2c3d4-5678-90ab-cdef-1234567890ab
+        name:
+          type: string
+          example: My Team
+        type:
+          type: string
+          enum:
+          - personal
+          - team
+
+    WorkspaceWithRole:
+      type: object
+      x-runtime: [cloud]
+      description: '[cloud-only] Workspace entity annotated with the requesting user''s role.'
+      required:
+      - id
+      - name
+      - type
+      - role
+      - created_at
+      - joined_at
+      properties:
+        id:
+          type: string
+          example: w-a1b2c3d4-5678-90ab-cdef-1234567890ab
+        name:
+          type: string
+          example: My Team
+        type:
+          type: string
+          enum:
+          - personal
+          - team
+        role:
+          type: string
+          enum:
+          - owner
+          - member
+        created_at:
+          type: string
+          format: date-time
+          description: When the workspace was created
+        joined_at:
+          type: string
+          format: date-time
+          description: When the user joined the workspace (same as created_at for the workspace creator)
+        subscription_tier:
+          $ref: '#/components/schemas/SubscriptionTier'
