@@ -430,27 +430,33 @@ class DA3Render(io.ComfyNode):
                                       options=[
                     io.DynamicCombo.Option("depth", cls._DEPTH_RENDER_INPUTS),
                     io.DynamicCombo.Option("depth_colored", cls._DEPTH_RENDER_INPUTS),
-                    io.DynamicCombo.Option("sky_mask", []),
-                    io.DynamicCombo.Option("confidence", []),
+                    io.DynamicCombo.Option("sky_mask", [
+                        io.Boolean.Input("colored", default=False,
+                                         tooltip="Apply the Turbo colormap to the sky mask."),
+                    ]),
+                    io.DynamicCombo.Option("confidence", [
+                        io.Boolean.Input("colored", default=False,
+                                         tooltip="Apply the Turbo colormap to the confidence map."),
+                    ]),
                 ]),
             ],
             outputs=[io.Image.Output()],
         )
 
     @classmethod
-    def execute(cls, geometry, output) -> io.NodeOutput:
+    def execute(cls, da3_geometry, output) -> io.NodeOutput:
         output_val = output["output"]
 
         if output_val in ("depth", "depth_colored"):
             normalization = output["normalization"]
             apply_sky_clip = output["apply_sky_clip"]
-            if apply_sky_clip and "sky" not in geometry:
+            if apply_sky_clip and "sky" not in da3_geometry:
                 raise ValueError(
                     "apply_sky_clip=True requires a sky tensor in the da3_geometry input, but none is present. "
                     "Run with Mono/Metric models or set apply_sky_clip=False."
                 )
-            depth = geometry["depth"]
-            sky = geometry.get("sky")
+            depth = da3_geometry["depth"]
+            sky = da3_geometry.get("sky")
             if apply_sky_clip and sky is not None:
                 depth = torch.stack([
                     da3_preprocess.apply_sky_aware_clip(depth[i], sky[i])
@@ -460,16 +466,22 @@ class DA3Render(io.ComfyNode):
             result = _turbo(grey[..., 0]) if output_val == "depth_colored" else grey
 
         elif output_val == "sky_mask":
-            if "sky" not in geometry:
+            if "sky" not in da3_geometry:
                 raise ValueError("geometry has no sky output; run with Mono/Metric models.")
-            sky = geometry["sky"]
-            result = sky.unsqueeze(-1).expand(*sky.shape, 3).contiguous()
+            sky = da3_geometry["sky"]
+            if output["colored"]:
+                result = _turbo(sky)
+            else:
+                result = sky.unsqueeze(-1).expand(*sky.shape, 3).contiguous()
 
         elif output_val == "confidence":
-            if "confidence" not in geometry:
-                raise ValueError("geometry has no confidence output; run with Small/Base models.")
-            result = _normalize_confidence(geometry["confidence"])
-            result = result.unsqueeze(-1).expand(*result.shape, 3).contiguous()
+            if "confidence" not in da3_geometry:
+                raise ValueError("da3_geometry has no confidence output; run with Small/Base models.")
+            conf = _normalize_confidence(da3_geometry["confidence"])
+            if output["colored"]:
+                result = _turbo(conf)
+            else:
+                result = conf.unsqueeze(-1).expand(*conf.shape, 3).contiguous()
 
         else:
             raise ValueError(f"Unknown output mode: {output_val}")
