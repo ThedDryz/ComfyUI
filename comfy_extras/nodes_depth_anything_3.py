@@ -1,16 +1,5 @@
 """ComfyUI nodes for Depth Anything 3.
 
-Adds these nodes:
-
-* ``LoadDA3Model`` -- load a DA3 ``.safetensors`` file from the
-  ``models/geometry_estimation/`` folder.
-* ``DA3Inference`` -- unified depth estimation node supporting both mono and
-  multi-view modes via a DynamicCombo selector. Returns a DA3_GEOMETRY dict of
-  raw tensors (depth, sky, confidence, camera). Feed into ``DA3Render``
-  to produce display images, or directly into ``MoGeRender`` for depth / mask views.
-* ``DA3Render`` -- post-processes a DA3_GEOMETRY dict: applies optional
-  sky clipping, normalises depth and confidence, and returns display images.
-
 Model capability matrix
 -----------------------
   Variant               head_type  has_sky  has_conf  cam_dec
@@ -18,10 +7,6 @@ Model capability matrix
   DA3-Base              dualdpt    False    True      yes
   DA3-Mono-Large        dpt        True     False     no
   DA3-Metric-Large      dpt        True     False     no  (raw output is metres)
-
-The node raises a ``ValueError`` at execution time when the selected
-parameters conflict with the loaded model's capabilities (e.g.
-``apply_sky_clip=True`` on a model with no sky head).
 """
 
 from __future__ import annotations
@@ -241,17 +226,6 @@ def _run_da3(model_patcher, image: torch.Tensor, process_res: int,
 
 
 class DA3Inference(io.ComfyNode):
-    """Raw Depth Anything 3 inference node.
-
-    Outputs a DA3_GEOMETRY dict of raw tensors. All display normalization
-    (sky clipping, depth scaling, confidence normalisation) is handled by
-    the companion ``DA3Render`` node.
-
-    Mono mode: each batch element is processed independently.
-    Multi-view mode: all frames share a single forward pass with cross-view
-    attention; adds ``extrinsics`` and ``intrinsics`` to the geometry dict.
-    """
-
     @classmethod
     def define_schema(cls):
         return io.Schema(
@@ -259,12 +233,11 @@ class DA3Inference(io.ComfyNode):
             search_aliases=["depth", "geometry", "da3", "depth anything", "monocular", "pointmap", "sky", "3d", "metric depth", "disparity"],
             display_name="Run Depth Anything 3",
             category="image/geometry_estimation",
-            description="Run Depth Anything 3 on an image or image batch. In multi-view mode each frame is treated as a separate view of the same scene.",
+            description="Run Depth Anything 3 on an image. In multi-view mode each image is treated as a separate view of the same scene.",
             inputs=[
                 DA3ModelType.Input("da3_model"),
                 io.Image.Input("image",
-                               tooltip="Single image or image batch. "
-                                       "In multi-view mode each frame is treated as "
+                               tooltip="In multi-view mode each image is treated as "
                                        "a separate view of the same scene."),
                 io.Int.Input("process_res", default=504, min=140, max=2520, step=14,
                              tooltip="Resolution the model runs at (longest side, multiple of 14). "
@@ -276,8 +249,8 @@ class DA3Inference(io.ComfyNode):
                                tooltip="- upper_bound_resize: scale so the longest side = process_res (caps memory, default).\n"
                                        "- lower_bound_resize: scale so the shortest side = process_res (preserves more detail on tall/wide images, uses more memory)."),
                 io.DynamicCombo.Input("mode",
-                                      tooltip="- mono: single image or independent batch — works with any model variant.\n"
-                                              "- multiview: all frames processed together for geometric consistency + camera pose — requires DA3-Small or DA3-Base (DA3-Mono-Large / DA3-Metric-Large do NOT support this mode).",
+                                      tooltip="- mono: single view image — works with any model variant.\n"
+                                              "- multiview: all images processed together for geometric consistency + camera pose, for Small/Base models only.",
                                       options=[
                     io.DynamicCombo.Option("mono", []),
                     io.DynamicCombo.Option("multiview", [
@@ -292,17 +265,17 @@ class DA3Inference(io.ComfyNode):
                         io.Combo.Input("pose_method",
                                        options=["cam_dec", "ray_pose"],
                                        default="cam_dec",
-                                               tooltip="- cam_dec: small MLP on the final camera token — works on DA3-Small and DA3-Base.\n"
-                                               "- ray_pose: RANSAC over the DualDPT ray output — works on DA3-Small and DA3-Base.\n"
-                                               "Both methods require DA3-Small or DA3-Base; this setting is ignored on Mono/Metric-Large."),
+                                               tooltip="This seeting is ignored for Mono/Metric models."
+                                               "- cam_dec: small MLP on the final camera token.\n"
+                                               "- ray_pose: RANSAC over the DualDPT ray output."),
                     ]),
                 ]),
             ],
             outputs=[
-                DA3Geometry.Output("geometry",
-                                   tooltip="DA3_GEOMETRY dict of raw tensors.\n"
-                                           "- Always: 'depth' (B,H,W), 'image', 'mode'.\n"
-                                           "- Optional: 'sky' + 'mask' (Mono/Metric), 'confidence' raw (Small/Base), 'extrinsics' + 'intrinsics' (multi-view)."),
+                DA3Geometry.Output("da3_geometry",
+                                   tooltip="Dictionary of non-normalized tensors.\n"
+                                           "- Always: 'depth', 'image', 'mode'.\n"
+                                           "- Optional: 'sky' (Mono/Metric), 'confidence' (Small/Base), 'extrinsics' + 'intrinsics' (multi-view)."),
             ],
         )
 
@@ -323,10 +296,10 @@ class DA3Inference(io.ComfyNode):
 
         if not has_cam_dec and not has_dualdpt:
             raise ValueError(
-                "multiview mode requires DA3-Small or DA3-Base — the loaded model "
+                "multiview mode requires Small or Base model. The loaded model "
                 f"(head_type='{diffusion.head_type}') does not support cross-view "
                 "attention or camera pose estimation. Switch mode to 'mono', or "
-                "load DA3-Small / DA3-Base for multiview."
+                "load Small or Base model for multiview."
             )
 
         if pose_method == "cam_dec" and not has_cam_dec:
@@ -424,39 +397,33 @@ class DA3Inference(io.ComfyNode):
 
 
 class DA3Render(io.ComfyNode):
-    """Visualise a DA3_GEOMETRY packet as a single image.
-
-    Mirrors the MoGeRender interface: one ``output`` selector, one IMAGE out.
-    Use multiple nodes in parallel to get depth + sky + confidence simultaneously.
-    """
-
     _DEPTH_RENDER_INPUTS = [
         io.Combo.Input("normalization",
                     options=["v2_style", "min_max", "raw"],
                     default="v2_style",
                     tooltip="- v2_style: mean/std normalisation for perceptually balanced results (default).\n"
                             "- min_max: stretches the full depth range to [0, 1] for maximum contrast.\n"
-                            "- raw: no scaling — preserves metric units for DA3-Metric-Large."),
+                            "- raw: no scaling — preserves metric units for Metric model."),
         io.Boolean.Input("apply_sky_clip", default=False,
                         tooltip="Clip sky-region depth to the 99th percentile of foreground depth before "
-                                "normalisation. Requires a 'sky' tensor in the geometry "
-                                "(DA3-Mono-Large or DA3-Metric-Large); raises an error otherwise."),
+                                "normalisation. Requires a 'sky' tensor in the da3_geometry input"
+                                "provided by Mono/Metric models; raises an error otherwise."),
     ]
 
     @classmethod
     def define_schema(cls):
         return io.Schema(
             node_id="DA3Render",
-            display_name="Depth Anything 3 Render",
+            display_name="Render Depth Anything 3",
             category="image/geometry_estimation",
-            description="Visualise a DA3_GEOMETRY packet. Drop multiple nodes to get different views simultaneously.",
+            description="Render a depth map, confidence map, or sky mask from DA3 geometry data.",
             inputs=[
-                DA3Geometry.Input("geometry"),
+                DA3Geometry.Input("da3_geometry"),
                 io.DynamicCombo.Input("output",
                                       tooltip="- depth: normalised greyscale depth image.\n"
                                               "- depth_colored: depth mapped through the Turbo colormap.\n"
-                                              "- sky_mask: sky probability in [0, 1] (Mono/Metric variants only).\n"
-                                              "- confidence: normalised depth confidence (Small/Base variants only).",
+                                              "- sky_mask: sky probability in [0, 1] (for Mono/Metric models only).\n"
+                                              "- confidence: normalised depth confidence (for Small/Base models only).",
                                       options=[
                     io.DynamicCombo.Option("depth", cls._DEPTH_RENDER_INPUTS),
                     io.DynamicCombo.Option("depth_colored", cls._DEPTH_RENDER_INPUTS),
@@ -476,8 +443,8 @@ class DA3Render(io.ComfyNode):
             apply_sky_clip = output["apply_sky_clip"]
             if apply_sky_clip and "sky" not in geometry:
                 raise ValueError(
-                    "apply_sky_clip=True requires a sky tensor in the geometry, but none is present. "
-                    "Run with DA3-Mono-Large or DA3-Metric-Large, or set apply_sky_clip=False."
+                    "apply_sky_clip=True requires a sky tensor in the da3_geometry input, but none is present. "
+                    "Run with Mono/Metric models or set apply_sky_clip=False."
                 )
             depth = geometry["depth"]
             sky = geometry.get("sky")
@@ -491,13 +458,13 @@ class DA3Render(io.ComfyNode):
 
         elif output_val == "sky_mask":
             if "sky" not in geometry:
-                raise ValueError("geometry has no sky output; run with DA3-Mono-Large or DA3-Metric-Large.")
+                raise ValueError("geometry has no sky output; run with Mono/Metric models.")
             sky = geometry["sky"]
             result = sky.unsqueeze(-1).expand(*sky.shape, 3).contiguous()
 
         elif output_val == "confidence":
             if "confidence" not in geometry:
-                raise ValueError("geometry has no confidence output; run with DA3-Small or DA3-Base.")
+                raise ValueError("geometry has no confidence output; run with Small/Base models.")
             result = _normalize_confidence(geometry["confidence"])
             result = result.unsqueeze(-1).expand(*result.shape, 3).contiguous()
 
@@ -538,14 +505,14 @@ class DA3GeometryToMesh(io.ComfyNode):
         return io.Schema(
             node_id="DA3GeometryToMesh",
             search_aliases=["da3", "depth anything", "mesh", "geometry", "3d", "triangulate"],
-            display_name="DA3 Geometry to Mesh",
+            display_name="Convert DA3 Geometry to Mesh",
             category="image/geometry_estimation",
-            description="Convert a DA3_GEOMETRY depth map into a triangulated 3D mesh (Types.MESH).",
+            description="Convert a depth map into a triangulated 3D mesh.",
             inputs=[
                 DA3Geometry.Input("da3_geometry"),
                 io.Int.Input("batch_index", default=0, min=0, max=4096,
-                             tooltip="Which frame of a batched DA3_GEOMETRY to mesh. "
-                                     "Per-frame vertex counts differ so batches cannot be stacked."),
+                             tooltip="Which image of a batched DA3_GEOMETRY to mesh. "
+                                     "Per-image vertex counts differ so batches cannot be stacked."),
                 io.Int.Input("decimation", default=1, min=1, max=8,
                              tooltip="Vertex stride; 1 = full resolution, 2 = half, etc."),
                 io.Float.Input("discontinuity_threshold", default=0.04, min=0.0, max=1.0, step=0.01,
@@ -640,13 +607,13 @@ class DA3GeometryToPointCloud(io.ComfyNode):
         return io.Schema(
             node_id="DA3GeometryToPointCloud",
             search_aliases=["da3", "depth anything", "point cloud", "pointcloud", "3d", "geometry"],
-            display_name="DA3 Geometry to Point Cloud",
+            display_name="Convert DA3 Geometry to Point Cloud",
             category="image/geometry_estimation",
             description="Unproject a DA3_GEOMETRY depth map into a 3D point cloud (DA3_POINT_CLOUD).",
             inputs=[
                 DA3Geometry.Input("da3_geometry"),
                 io.Int.Input("batch_index", default=0, min=0, max=4096,
-                             tooltip="Which frame of a batched DA3_GEOMETRY to convert."),
+                             tooltip="Which image of a batched DA3_GEOMETRY to convert."),
                 io.Float.Input("confidence_threshold", default=0.1, min=0.0, max=1.0, step=0.01,
                                tooltip="Exclude pixels whose per-image normalised confidence is below this value (0 = keep all). "
                                        "Ignored when the geometry has no confidence map."),
