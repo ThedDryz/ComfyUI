@@ -1450,6 +1450,17 @@ class WAN21_SCAIL(WAN21_T2V):
         out = model_base.WAN21_SCAIL(self, image_to_video=False, device=device)
         return out
 
+
+class WAN21_SCAIL2(WAN21_T2V):
+    unet_config = {
+        "image_model": "wan2.1",
+        "model_type": "scail2",
+    }
+
+    def get_model(self, state_dict, prefix="", device=None):
+        out = model_base.WAN21_SCAIL2(self, image_to_video=False, device=device)
+        return out
+
 class WAN22_WanDancer(WAN21_T2V):
     unet_config = {
         "image_model": "wan2.1",
@@ -1671,35 +1682,6 @@ class Chroma(supported_models_base.BASE):
         pref = self.text_encoder_key_prefix[0]
         t5_detect = comfy.text_encoders.sd3_clip.t5_xxl_detect(state_dict, "{}t5xxl.transformer.".format(pref))
         return supported_models_base.ClipTarget(comfy.text_encoders.pixart_t5.PixArtTokenizer, comfy.text_encoders.pixart_t5.pixart_te(**t5_detect))
-
-class SeedVR2(supported_models_base.BASE):
-    unet_config = {
-        "image_model": "seedvr2"
-    }
-    latent_format = comfy.latent_formats.SeedVR2
-
-    vae_key_prefix = ["vae."]
-    text_encoder_key_prefix = ["text_encoders."]
-    supported_inference_dtypes = [torch.bfloat16, torch.float16, torch.float32]
-    sampling_settings = {
-        "shift": 1.0,
-    }
-
-    def set_inference_dtype(self, dtype, manual_cast_dtype, device=None):
-        if (
-            dtype == torch.float16
-            and manual_cast_dtype is None
-            and comfy.model_management.should_use_bf16(device)
-        ):
-            manual_cast_dtype = torch.bfloat16
-        super().set_inference_dtype(dtype, manual_cast_dtype, device=device)
-
-    def get_model(self, state_dict, prefix="", device=None):
-        out = model_base.SeedVR2(self, device=device)
-        return out
-
-    def clip_target(self, state_dict={}):
-        return None
 
 class ChromaRadiance(Chroma):
     unet_config = {
@@ -2058,6 +2040,7 @@ class LongCatImage(supported_models_base.BASE):
         hunyuan_detect = comfy.text_encoders.hunyuan_video.llama_detect(state_dict, "{}qwen25_7b.transformer.".format(pref))
         return supported_models_base.ClipTarget(comfy.text_encoders.longcat_image.LongCatImageTokenizer, comfy.text_encoders.longcat_image.te(**hunyuan_detect))
 
+
 class RT_DETR_v4(supported_models_base.BASE):
     unet_config = {
         "image_model": "RT_DETR_v4",
@@ -2287,6 +2270,7 @@ models = [
     WAN22_Animate,
     WAN21_FlowRVS,
     WAN21_SCAIL,
+    WAN21_SCAIL2,
     WAN22_WanDancer,
     Hunyuan3Dv2mini,
     Hunyuan3Dv2,
@@ -2295,7 +2279,6 @@ models = [
     HiDream,
     HiDreamO1,
     Chroma,
-    SeedVR2,
     ChromaRadiance,
     ACEStep,
     ACEStep15,
