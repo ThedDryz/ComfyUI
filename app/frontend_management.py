@@ -228,11 +228,26 @@ class FrontendManager:
     def _auto_managed_metadata_path(cls, repo_owner: str, repo_name: str) -> Path:
         return cls._provider_dir(repo_owner, repo_name) / cls.AUTO_MANAGED_METADATA_FILENAME
 
+    # A version directory name must look like a simple semver-ish token. We
+    # use this as a defensive allowlist when interpreting metadata so a
+    # malformed or tampered ``.auto_managed.json`` cannot point cleanup at
+    # paths outside the provider directory (e.g. ``../somewhere``).
+    _VERSION_DIRNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+    @classmethod
+    def _is_safe_version_dirname(cls, name: str) -> bool:
+        if not isinstance(name, str):
+            return False
+        if name in (".", "..") or "/" in name or "\\" in name or "\x00" in name:
+            return False
+        return bool(cls._VERSION_DIRNAME_PATTERN.match(name))
+
     @classmethod
     def _read_auto_managed_versions(cls, repo_owner: str, repo_name: str) -> list[str]:
         """Return the list of versions previously downloaded under an
-        auto-managed specifier for this provider. Missing or unreadable
-        metadata is treated as an empty list."""
+        auto-managed specifier for this provider. Missing, unreadable, or
+        otherwise malformed metadata is treated as an empty list so a bad
+        file never blocks startup or directs cleanup at unrelated paths."""
         metadata_path = cls._auto_managed_metadata_path(repo_owner, repo_name)
         if not metadata_path.exists():
             return []
@@ -246,20 +261,31 @@ class FrontendManager:
                 exc,
             )
             return []
+        if not isinstance(data, dict):
+            logging.warning(
+                "Frontend auto-managed metadata at %s has unexpected shape; ignoring.",
+                metadata_path,
+            )
+            return []
         versions = data.get("auto_managed", [])
         if not isinstance(versions, list):
             return []
-        return [str(v) for v in versions if isinstance(v, (str, int))]
+        # Filter out anything that doesn't look like a safe version dirname
+        # so a tampered file can't point us at, say, ``../../etc``.
+        return [v for v in versions if cls._is_safe_version_dirname(v)]
 
     @classmethod
     def _write_auto_managed_versions(
         cls, repo_owner: str, repo_name: str, versions: list[str]
     ) -> None:
         """Persist the auto-managed version list atomically. Deduped and
-        sorted for stability so the file is friendly to diffs."""
+        sorted for stability so the file is friendly to diffs. Any entry that
+        doesn't look like a safe version dirname is dropped before write so
+        the on-disk metadata always contains valid values."""
         metadata_path = cls._auto_managed_metadata_path(repo_owner, repo_name)
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"auto_managed": sorted(set(versions))}
+        safe_versions = [v for v in versions if cls._is_safe_version_dirname(v)]
+        payload = {"auto_managed": sorted(set(safe_versions))}
         # Atomic write via temp file + rename so a crashed process can't leave
         # a half-written metadata file behind.
         tmp_path = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
@@ -294,11 +320,53 @@ class FrontendManager:
             return
 
         provider_dir = cls._provider_dir(repo_owner, repo_name)
+        try:
+            provider_dir_resolved = provider_dir.resolve()
+        except OSError as exc:
+            logging.warning(
+                "Could not resolve provider directory %s for cleanup: %s",
+                provider_dir,
+                exc,
+            )
+            return
+
         for stale_version in tracked:
             if stale_version == keep_version:
                 continue
+            # ``_read_auto_managed_versions`` already filters tracked entries
+            # through ``_is_safe_version_dirname``, but re-check here so that
+            # this helper is also safe when called with externally-supplied
+            # version lists (and so a defense-in-depth audit can confirm the
+            # rmtree target lives under the provider directory).
+            if not cls._is_safe_version_dirname(stale_version):
+                logging.warning(
+                    "Refusing to clean up suspicious frontend version name: %r",
+                    stale_version,
+                )
+                continue
             stale_path = provider_dir / stale_version
             if not stale_path.exists():
+                continue
+            try:
+                stale_resolved = stale_path.resolve()
+            except OSError as exc:
+                logging.warning(
+                    "Could not resolve stale frontend path %s: %s",
+                    stale_path,
+                    exc,
+                )
+                continue
+            # Ensure the resolved target lives strictly under the resolved
+            # provider directory (so symlinks / path tricks can't escape).
+            if (
+                stale_resolved == provider_dir_resolved
+                or provider_dir_resolved not in stale_resolved.parents
+            ):
+                logging.warning(
+                    "Refusing to remove path outside provider dir: %s (provider=%s)",
+                    stale_resolved,
+                    provider_dir_resolved,
+                )
                 continue
             try:
                 shutil.rmtree(stale_path)

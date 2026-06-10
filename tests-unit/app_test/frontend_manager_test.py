@@ -331,6 +331,68 @@ def test_read_auto_managed_versions_corrupt(custom_frontends_root):
     assert FrontendManager._read_auto_managed_versions("o", "r") == []
 
 
+@pytest.mark.parametrize("payload", ["[]", "null", '"oops"', "42"])
+def test_read_auto_managed_versions_non_dict_root(custom_frontends_root, payload):
+    """Valid JSON whose root isn't a dict must not raise — bug pointed out in
+    Oracle review: ``data.get(...)`` would throw on non-dict roots."""
+    provider_dir = custom_frontends_root / "o_r"
+    provider_dir.mkdir()
+    (provider_dir / FrontendManager.AUTO_MANAGED_METADATA_FILENAME).write_text(payload)
+    assert FrontendManager._read_auto_managed_versions("o", "r") == []
+
+
+def test_read_auto_managed_versions_drops_unsafe_names(custom_frontends_root):
+    """Tampered metadata containing path-traversal-y names must be ignored
+    at read time so cleanup never even sees them."""
+    provider_dir = custom_frontends_root / "o_r"
+    provider_dir.mkdir()
+    (provider_dir / FrontendManager.AUTO_MANAGED_METADATA_FILENAME).write_text(
+        '{"auto_managed": ["1.0.0", "../escape", "/etc", "..", ".", "ok-1.2"]}'
+    )
+    assert FrontendManager._read_auto_managed_versions("o", "r") == ["1.0.0", "ok-1.2"]
+
+
+def test_write_auto_managed_versions_drops_unsafe_names(custom_frontends_root):
+    """Even if a caller passes a tainted list, the file we persist must
+    only contain safe names."""
+    FrontendManager._write_auto_managed_versions(
+        "o", "r", ["1.0.0", "../escape", "/etc/passwd", "..", "."]
+    )
+    assert FrontendManager._read_auto_managed_versions("o", "r") == ["1.0.0"]
+
+
+def test_prune_refuses_to_delete_outside_provider_dir(
+    custom_frontends_root, monkeypatch
+):
+    """Defense in depth: even if a hostile name slips past the read/write
+    filters somehow, ``_prune_auto_managed_versions`` must refuse to rmtree
+    anything outside the provider directory."""
+    # Set up a sibling directory that must NOT be touched.
+    sibling = custom_frontends_root / "do-not-touch"
+    sibling.mkdir()
+    (sibling / "marker").write_text("keep me")
+
+    provider_dir = custom_frontends_root / "o_r"
+    provider_dir.mkdir()
+    _make_version_dir(custom_frontends_root, "o", "r", "1.0.0")
+
+    # Bypass the read filter to simulate a corrupt-but-parseable list slipping
+    # through (e.g. older code wrote it before this hardening landed).
+    monkeypatch.setattr(
+        FrontendManager,
+        "_read_auto_managed_versions",
+        classmethod(lambda cls, owner, repo: ["1.0.0", "../do-not-touch"]),
+    )
+
+    FrontendManager._prune_auto_managed_versions("o", "r", keep_version="2.0.0")
+
+    # Sibling untouched.
+    assert sibling.exists()
+    assert (sibling / "marker").read_text() == "keep me"
+    # In-bounds folder still gets cleaned.
+    assert not (provider_dir / "1.0.0").exists()
+
+
 def test_prune_auto_managed_versions_removes_stale_and_keeps_pinned(
     custom_frontends_root,
 ):
