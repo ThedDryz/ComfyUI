@@ -4,7 +4,7 @@ from fractions import Fraction
 from typing import Optional, Union, IO
 import io
 import av
-from .._util import VideoContainer, VideoCodec, VideoComponents
+from .._util import VideoContainer, VideoCodec, VideoBitDepth, VideoComponents
 
 class VideoInput(ABC):
     """
@@ -27,10 +27,14 @@ class VideoInput(ABC):
         path: Union[str, IO[bytes]],
         format: VideoContainer = VideoContainer.AUTO,
         codec: VideoCodec = VideoCodec.AUTO,
-        metadata: Optional[dict] = None
+        metadata: Optional[dict] = None,
+        bit_depth: VideoBitDepth = VideoBitDepth.AUTO,
     ):
         """
         Abstract method to save the video input to a file.
+
+        bit_depth applies when the video is (re-)encoded: AUTO preserves the
+        source bit depth where one exists, otherwise 8-bit.
         """
         pass
 
