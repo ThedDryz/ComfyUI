@@ -55,14 +55,22 @@ def interrupt_processing(value=True):
 
 MAX_RESOLUTION=16384
 
-class CLIPTextEncode:
+class CLIPTextEncode(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
-        return {"required": {"text": ("STRING", {"multiline": True}), "clip": ("CLIP", )}}
-    RETURN_TYPES = ("CONDITIONING",)
+    def INPUT_TYPES(s) -> InputTypeDict:
+        return {
+            "required": {
+                "text": (IO.STRING, {"multiline": True, "dynamicPrompts": True, "tooltip": "The text to be encoded."}),
+                "clip": (IO.CLIP, {"tooltip": "The CLIP model used for encoding the text."})
+            }
+        }
+    RETURN_TYPES = (IO.CONDITIONING,)
+    OUTPUT_TOOLTIPS = ("A conditioning containing the embedded text used to guide the diffusion model.",)
     FUNCTION = "encode"
 
-    CATEGORY = "conditioning"
+    CATEGORY = "model/conditioning"
+    DESCRIPTION = "Encodes a text prompt using a CLIP model into an embedding that can be used to guide the diffusion model towards generating specific images."
+    SEARCH_ALIASES = ["text", "prompt", "text prompt", "positive prompt", "negative prompt", "encode text", "text encoder", "encode prompt"]
 
     def encode(self, clip, text):
         if isinstance(text, list):
